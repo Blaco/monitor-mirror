@@ -1,7 +1,16 @@
-*.ek
-analysis
+# Build outputs
+*.exe
+*.res
+*.obj
+*.o
+
+# Local runtime/config files
 mirror.cfg
 mirror.log
-mirror.cfg.tmp
-/cpp/mirror.exe
-/cpp/app.res
+
+# Temporary/editor files
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db

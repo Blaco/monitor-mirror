@@ -4,3 +4,4 @@ REM Produces mirror.exe as a GUI app (no console window), with a custom file ico
 windres app.rc -O coff -o app.res
 g++ -std=c++17 -O2 -municode -mwindows mirror.cpp config_gui.cpp app.res -o mirror.exe -ld3d11 -ldxgi -ld3dcompiler -lgdi32 -ldwmapi -luuid -lole32 -lcomdlg32 -lwinmm -lcomctl32 -luxtheme -ladvapi32
 if %ERRORLEVEL%==0 (echo BUILD OK -^> mirror.exe) else (echo BUILD FAILED)
+pause
