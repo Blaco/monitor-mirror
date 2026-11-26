@@ -1,3 +1,7 @@
 *.ek
 analysis
 mirror.cfg
+mirror.log
+mirror.cfg.tmp
+/cpp/mirror.exe
+/cpp/app.res
