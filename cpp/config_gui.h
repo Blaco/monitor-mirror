@@ -18,7 +18,7 @@
 #include "monitors.h"
 
 enum class ConfigResult {
-    Save,   // user saved; `cfg` holds the new configuration (already written to defaultPath)
+    Save,   // user accepted; `cfg` holds the candidate configuration (renderer commits it)
     Quit    // user chose Cancel & Quit
 };
 
@@ -28,4 +28,4 @@ ConfigResult RunConfigDialog(MirrorConfig& cfg,
                              const std::vector<MonitorInfo>& mons,
                              HINSTANCE hInst,
                              const std::wstring& banner,
-                             const std::wstring& defaultPath);
+                             const std::wstring& defaultPath, bool live = false);
