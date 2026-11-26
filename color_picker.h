@@ -16,6 +16,9 @@ struct State {
     bool syncing=false, dragging=false, accepted=false, done=false;
     HWND value=nullptr;
     HWND fields[3]{};
+    std::vector<DWORD> wheelPixels;
+    double wheelBrightness=-1;
+    COLORREF wheelBackground=CLR_INVALID;
 };
 inline COLORREF hsv(double h,double s,double v) {
     h=std::fmod(h+360.0,360.0); s=std::clamp(s,0.0,1.0); v=std::clamp(v,0.0,1.0);
@@ -33,18 +36,29 @@ inline void fromRGB(State& s) {
 }
 inline void update(HWND hwnd,State& s,bool writeFields=true) {
     s.syncing=true;
-    SendMessageW(s.value,TBM_SETPOS,TRUE,int(std::lround(s.val*255)));
+    int brightness=int(std::lround(s.val*255));
+    if(SendMessageW(s.value,TBM_GETPOS,0,0)!=brightness)
+        SendMessageW(s.value,TBM_SETPOS,TRUE,brightness);
     if(writeFields) {
-        SetDlgItemInt(hwnd,Red,GetRValue(s.color),FALSE);
-        SetDlgItemInt(hwnd,Green,GetGValue(s.color),FALSE);
-        SetDlgItemInt(hwnd,Blue,GetBValue(s.color),FALSE);
+        const UINT channels[]={GetRValue(s.color),GetGValue(s.color),GetBValue(s.color)};
+        for(int i=0;i<3;++i) {
+            BOOL valid=FALSE;
+            UINT current=GetDlgItemInt(hwnd,Red+i,&valid,FALSE);
+            if(!valid || current!=channels[i]) SetDlgItemInt(hwnd,Red+i,channels[i],FALSE);
+        }
     }
-    s.syncing=false; InvalidateRect(hwnd,nullptr,FALSE);
+    s.syncing=false;
+    // Include the outline of the marker, which can extend past the wheel.
+    RECT wheel{Left-8,Top-8,Left+Size+8,Top+Size+8}, swatch{256,182,392,238};
+    InvalidateRect(hwnd,&wheel,FALSE);
+    InvalidateRect(hwnd,&swatch,FALSE);
 }
 inline void pick(HWND hwnd,State& s,int x,int y) {
     double dx=x-(Left+Radius),dy=y-(Top+Radius);
-    s.sat=std::min(1.0,std::hypot(dx,dy)/Radius);
-    if(s.sat>0) s.hue=std::fmod(std::atan2(dy,dx)*180/Pi+360,360.0);
+    double sat=std::min(1.0,std::hypot(dx,dy)/Radius);
+    double hue=sat>0?std::fmod(std::atan2(dy,dx)*180/Pi+360,360.0):s.hue;
+    if(sat==s.sat && hue==s.hue) return;
+    s.sat=sat; s.hue=hue;
     s.color=hsv(s.hue,s.sat,s.val); update(hwnd,s);
 }
 inline LRESULT CALLBACK Proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
@@ -67,22 +81,41 @@ inline LRESULT CALLBACK Proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
         child(L"BUTTON",L"Cancel",WS_TABSTOP|BS_PUSHBUTTON,312,260,80,28,IDCANCEL);
         fromRGB(*s); update(hwnd,*s); return 0;
     }
+    case WM_ERASEBKGND: return 1; // the buffered paint covers the entire invalid region
+    case WM_SYSCOLORCHANGE:
+        InvalidateRect(hwnd,nullptr,FALSE); return 0;
     case WM_PAINT: {
-        PAINTSTRUCT ps{}; HDC dc=BeginPaint(hwnd,&ps); RECT cr{}; GetClientRect(hwnd,&cr);
+        PAINTSTRUCT ps{}; HDC target=BeginPaint(hwnd,&ps); RECT cr{}; GetClientRect(hwnd,&cr);
+        HDC mem=CreateCompatibleDC(target);
+        HBITMAP bmp=mem?CreateCompatibleBitmap(target,cr.right,cr.bottom):nullptr;
+        HGDIOBJ old=bmp?SelectObject(mem,bmp):nullptr;
+        bool buffered=old && old!=HGDI_ERROR;
+        HDC dc=buffered?mem:target;
         FillRect(dc,&cr,GetSysColorBrush(COLOR_BTNFACE));
-        std::vector<DWORD> pixels(Size*Size); COLORREF bg=GetSysColor(COLOR_BTNFACE);
-        for(int y=0;y<Size;++y) for(int x=0;x<Size;++x) {
-            double dx=x+0.5-Radius,dy=y+0.5-Radius,rad=std::hypot(dx,dy)/Radius;
-            COLORREF c=rad<=1?hsv(std::atan2(dy,dx)*180/Pi,rad,s->val):bg;
-            pixels[y*Size+x]=(DWORD(GetRValue(c))<<16)|(DWORD(GetGValue(c))<<8)|GetBValue(c);
+        COLORREF bg=GetSysColor(COLOR_BTNFACE);
+        if(s->wheelPixels.empty() || s->wheelBrightness!=s->val || s->wheelBackground!=bg) {
+            s->wheelPixels.resize(Size*Size);
+            for(int y=0;y<Size;++y) for(int x=0;x<Size;++x) {
+                double dx=x+0.5-Radius,dy=y+0.5-Radius,rad=std::hypot(dx,dy)/Radius;
+                COLORREF c=rad<=1?hsv(std::atan2(dy,dx)*180/Pi,rad,s->val):bg;
+                s->wheelPixels[y*Size+x]=(DWORD(GetRValue(c))<<16)|(DWORD(GetGValue(c))<<8)|GetBValue(c);
+            }
+            s->wheelBrightness=s->val; s->wheelBackground=bg;
         }
         BITMAPINFO bi{}; bi.bmiHeader.biSize=sizeof(BITMAPINFOHEADER); bi.bmiHeader.biWidth=Size; bi.bmiHeader.biHeight=-Size; bi.bmiHeader.biPlanes=1; bi.bmiHeader.biBitCount=32; bi.bmiHeader.biCompression=BI_RGB;
-        SetDIBitsToDevice(dc,Left,Top,Size,Size,0,0,0,Size,pixels.data(),&bi,DIB_RGB_COLORS);
+        SetDIBitsToDevice(dc,Left,Top,Size,Size,0,0,0,Size,s->wheelPixels.data(),&bi,DIB_RGB_COLORS);
         int x=Left+Radius+int(std::lround(std::cos(s->hue*Pi/180)*s->sat*(Radius-1)));
         int y=Top+Radius+int(std::lround(std::sin(s->hue*Pi/180)*s->sat*(Radius-1)));
         HGDIOBJ ob=SelectObject(dc,GetStockObject(NULL_BRUSH)); HPEN black=CreatePen(PS_SOLID,3,RGB(0,0,0)),white=CreatePen(PS_SOLID,1,RGB(255,255,255));
         HGDIOBJ op=SelectObject(dc,black); Ellipse(dc,x-5,y-5,x+6,y+6); SelectObject(dc,white); Ellipse(dc,x-5,y-5,x+6,y+6); SelectObject(dc,op); SelectObject(dc,ob); DeleteObject(black); DeleteObject(white);
         RECT sw{256,182,392,238}; HBRUSH b=CreateSolidBrush(s->color); FillRect(dc,&sw,b); DeleteObject(b); FrameRect(dc,&sw,GetSysColorBrush(COLOR_WINDOWFRAME));
+        if(buffered) {
+            BitBlt(target,ps.rcPaint.left,ps.rcPaint.top,ps.rcPaint.right-ps.rcPaint.left,
+                   ps.rcPaint.bottom-ps.rcPaint.top,mem,ps.rcPaint.left,ps.rcPaint.top,SRCCOPY);
+            SelectObject(mem,old);
+        }
+        if(bmp) DeleteObject(bmp);
+        if(mem) DeleteDC(mem);
         EndPaint(hwnd,&ps); return 0;
     }
     case WM_LBUTTONDOWN: {
@@ -90,7 +123,8 @@ inline LRESULT CALLBACK Proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
         if(std::hypot(double(x-Left-Radius),double(y-Top-Radius))<=Radius) {s->dragging=true; SetCapture(hwnd); pick(hwnd,*s,x,y);} return 0;
     }
     case WM_MOUSEMOVE: if(s->dragging) pick(hwnd,*s,GET_X_LPARAM(lp),GET_Y_LPARAM(lp)); return 0;
-    case WM_LBUTTONUP: if(s->dragging){s->dragging=false; ReleaseCapture();} return 0;
+    case WM_LBUTTONUP: if(s->dragging){pick(hwnd,*s,GET_X_LPARAM(lp),GET_Y_LPARAM(lp)); s->dragging=false; ReleaseCapture();} return 0;
+    case WM_CANCELMODE: if(s->dragging){s->dragging=false; if(GetCapture()==hwnd) ReleaseCapture();} return 0;
     case WM_CAPTURECHANGED: s->dragging=false; return 0;
     case WM_HSCROLL: if(!s->syncing && (HWND)lp==s->value){s->val=SendMessageW(s->value,TBM_GETPOS,0,0)/255.0; s->color=hsv(s->hue,s->sat,s->val); update(hwnd,*s);} return 0;
     case WM_COMMAND: {
@@ -115,7 +149,7 @@ inline LRESULT CALLBACK Proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
     return DefWindowProcW(hwnd,msg,wp,lp);
 }
 inline bool Choose(HWND owner,COLORREF& color) {
-    HINSTANCE hi=GetModuleHandleW(nullptr); WNDCLASSW wc{}; wc.lpfnWndProc=Proc; wc.hInstance=hi; wc.lpszClassName=L"MirrorRGBWheel"; wc.hCursor=LoadCursorW(nullptr,IDC_ARROW); wc.hbrBackground=GetSysColorBrush(COLOR_BTNFACE);
+    HINSTANCE hi=GetModuleHandleW(nullptr); WNDCLASSW wc{}; wc.lpfnWndProc=Proc; wc.hInstance=hi; wc.lpszClassName=L"MirrorRGBWheel"; wc.hCursor=LoadCursorW(nullptr,IDC_ARROW); wc.hbrBackground=nullptr;
     if(!RegisterClassW(&wc)&&GetLastError()!=ERROR_CLASS_ALREADY_EXISTS) return false;
     State s; s.color=color; RECT r{0,0,408,304}; AdjustWindowRectEx(&r,WS_CAPTION|WS_SYSMENU,FALSE,WS_EX_DLGMODALFRAME|WS_EX_CONTROLPARENT);
     RECT parent{}; GetWindowRect(owner,&parent); int w=r.right-r.left,h=r.bottom-r.top;

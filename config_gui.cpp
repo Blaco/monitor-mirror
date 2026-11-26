@@ -33,9 +33,11 @@ enum {
     ID_ROT, ID_FLIPH, ID_FLIPV, ID_WINDOWED, ID_LOG, ID_LOCK_CURSOR, ID_LOW_LATENCY, ID_GUARD_WINDOWS,
     ID_SAVE = 200, ID_IMPORT, ID_EXPORT, ID_QUIT, ID_REFRESH, ID_IDENTIFY,
     ID_TAB=300, ID_MAG_ENABLE, ID_MAG_MODE, ID_MAG_SHAPE, ID_MAG_W, ID_MAG_H,
-    ID_MAG_ZOOM, ID_MAG_EDGE, ID_MAG_BORDER, ID_MAG_COLOR, ID_MAG_SHARP, ID_MAG_KEY, ID_MAG_FEATHER
+    ID_MAG_ZOOM, ID_MAG_EDGE, ID_MAG_BORDER, ID_MAG_COLOR, ID_MAG_SHARP, ID_MAG_KEY, ID_MAG_FEATHER,
+    ID_MAG_W_EDIT=330, ID_MAG_H_EDIT, ID_MAG_ZOOM_EDIT, ID_MAG_BORDER_EDIT, ID_MAG_FEATHER_EDIT
 };
 static_assert(ID_GUARD_WINDOWS < ID_SAVE, "Control ID ranges must not overlap");
+static_assert(ID_MAG_FEATHER < ID_MAG_W_EDIT, "Magnifier control IDs must not overlap");
 static const UINT WM_CANVAS_CHANGED = WM_APP + 20;   // wParam: 0=source, 1=target
 
 // shared fonts / brushes (created in RunConfigDialog)
@@ -381,6 +383,7 @@ struct DlgState {
     HWND hMagBorder=nullptr, hMagColor=nullptr, hMagSharp=nullptr, hMagKey=nullptr;
     HWND hMagWValue=nullptr, hMagHValue=nullptr, hMagZoomValue=nullptr, hMagBorderValue=nullptr;
     HWND hMagFeather=nullptr, hMagFeatherValue=nullptr;
+    bool syncingMagnifier=false;       // guard against slider <-> edit feedback
     COLORREF magColor=RGB(255,255,255);
     std::vector<HWND> mirrorPage, magPage;
     int page=0;
@@ -541,16 +544,54 @@ static void updateModeControls(DlgState* s) {
 static int sliderValue(HWND slider) {
     return (int)SendMessageW(slider, TBM_GETPOS, 0, 0);
 }
+struct MagnifierField { HWND slider, edit; int id; };
+static void writeMagnifierValue(DlgState* s, HWND slider, HWND edit) {
+    const bool wasSyncing=s->syncingMagnifier;
+    s->syncingMagnifier=true;
+    std::wstring text=std::to_wstring(sliderValue(slider));
+    SetWindowTextW(edit,text.c_str());
+    s->syncingMagnifier=wasSyncing;
+}
+// Permit incomplete input while typing; clamp on focus loss or Save/Export.
+// An empty field restores the last valid slider value.
+static void editMagnifierValue(DlgState* s, HWND slider, HWND edit, bool commit) {
+    if(s->syncingMagnifier || !slider || !edit) return;
+    wchar_t buf[16]{};
+    int n=GetWindowTextW(edit,buf,16);
+    int lo=(int)SendMessageW(slider,TBM_GETRANGEMIN,0,0);
+    int hi=(int)SendMessageW(slider,TBM_GETRANGEMAX,0,0);
+    int v=0;
+    bool valid=n>0;
+    for(int i=0;i<n;++i) {
+        if(buf[i]<L'0'||buf[i]>L'9') {valid=false; break;}
+        // Saturate before multiplying to avoid overflow even on pasted input.
+        v=std::min(hi+1,v*10+int(buf[i]-L'0'));
+    }
+    if(valid && (commit || (v>=lo && v<=hi))) {
+        v=clampi(v,lo,hi);
+        if(sliderValue(slider)!=v) SendMessageW(slider,TBM_SETPOS,TRUE,v);
+    }
+    if(commit) writeMagnifierValue(s,slider,edit);
+}
 static void updateMagnifierValues(DlgState* s) {
-    auto value = [](HWND slider, HWND display, LPCWSTR unit) {
-        std::wstring text = std::to_wstring(sliderValue(slider)) + unit;
-        SetWindowTextW(display, text.c_str());
-    };
-    value(s->hMagW, s->hMagWValue, L" px");
-    value(s->hMagH, s->hMagHValue, L" px");
-    value(s->hMagZoom, s->hMagZoomValue, L"%");
-    value(s->hMagBorder, s->hMagBorderValue, L" px");
-    value(s->hMagFeather, s->hMagFeatherValue, L" px");
+    for(const auto& f : {MagnifierField{s->hMagW,s->hMagWValue,ID_MAG_W_EDIT},
+        {s->hMagH,s->hMagHValue,ID_MAG_H_EDIT},{s->hMagZoom,s->hMagZoomValue,ID_MAG_ZOOM_EDIT},
+        {s->hMagBorder,s->hMagBorderValue,ID_MAG_BORDER_EDIT},{s->hMagFeather,s->hMagFeatherValue,ID_MAG_FEATHER_EDIT}})
+        writeMagnifierValue(s,f.slider,f.edit);
+}
+static bool handleMagnifierEdit(DlgState* s, int id, int code) {
+    if(code!=EN_CHANGE && code!=EN_KILLFOCUS) return false;
+    for(const auto& f : {MagnifierField{s->hMagW,s->hMagWValue,ID_MAG_W_EDIT},
+        {s->hMagH,s->hMagHValue,ID_MAG_H_EDIT},{s->hMagZoom,s->hMagZoomValue,ID_MAG_ZOOM_EDIT},
+        {s->hMagBorder,s->hMagBorderValue,ID_MAG_BORDER_EDIT},{s->hMagFeather,s->hMagFeatherValue,ID_MAG_FEATHER_EDIT}})
+        if(id==f.id) {editMagnifierValue(s,f.slider,f.edit,code==EN_KILLFOCUS); return true;}
+    return false;
+}
+static void commitMagnifierValues(DlgState* s) {
+    for(const auto& f : {MagnifierField{s->hMagW,s->hMagWValue,ID_MAG_W_EDIT},
+        {s->hMagH,s->hMagHValue,ID_MAG_H_EDIT},{s->hMagZoom,s->hMagZoomValue,ID_MAG_ZOOM_EDIT},
+        {s->hMagBorder,s->hMagBorderValue,ID_MAG_BORDER_EDIT},{s->hMagFeather,s->hMagFeatherValue,ID_MAG_FEATHER_EDIT}})
+        editMagnifierValue(s,f.slider,f.edit,true);
 }
 static void updateMagnifierControls(DlgState* s) {
     bool enabled=SendMessageW(s->hMagEnable,BM_GETCHECK,0,0)==BST_CHECKED;
@@ -579,6 +620,7 @@ static void loadMagnifier(DlgState* s, MagnifierConfig m) {
     updateMagnifierControls(s);
 }
 static MagnifierConfig readMagnifier(DlgState* s) {
+    commitMagnifierValues(s);
     MagnifierConfig m;
     m.enabled=SendMessageW(s->hMagEnable,BM_GETCHECK,0,0)==BST_CHECKED;
     m.sharp=SendMessageW(s->hMagSharp,BM_GETCHECK,0,0)==BST_CHECKED;
@@ -1124,12 +1166,12 @@ static void createControls(HWND hwnd, DlgState* s, HINSTANCE hi, const std::wstr
     label(L"Equal width and height make a circle or square.",mx,my+405,innerW,g_subFont);
 
     label(L"Lens size & zoom",rx,my+14,innerW,g_hdrFont);
-    label(L"Drag a slider or use the arrow keys for precision.",rx,my+40,innerW,g_subFont);
-    auto slider=[&](int id,LPCWSTR name,LPCWSTR range,int y,int lo,int hiValue,int page,HWND& display){
-        label(name,rx,y,innerW-100);
-        display=track(CreateWindowExW(0,L"STATIC",L"",WS_CHILD|SS_RIGHT|SS_CENTERIMAGE,
-            rx+innerW-96,y,96,24,hwnd,nullptr,hi,nullptr));
-        SendMessageW(display,WM_SETFONT,(WPARAM)g_btnFont,TRUE);
+    label(L"Drag a slider or type an exact value.",rx,my+40,innerW,g_subFont);
+    auto slider=[&](int id,int editId,LPCWSTR name,LPCWSTR range,LPCWSTR unit,int y,int lo,int hiValue,int page,HWND& display){
+        label(name,rx,y,innerW-116);
+        display=track(makeEdit(hwnd,hi,editId,rx+innerW-108,y,72,24));
+        SendMessageW(display,EM_SETLIMITTEXT,4,0);
+        label(unit,rx+innerW-30,y,30,g_subFont);
         HWND h=track(CreateWindowExW(0,TRACKBAR_CLASSW,L"",WS_CHILD|WS_TABSTOP|TBS_HORZ|TBS_NOTICKS,
             rx,y+25,innerW,30,hwnd,(HMENU)(INT_PTR)id,hi,nullptr));
         SendMessageW(h,TBM_SETRANGE,TRUE,MAKELPARAM(lo,hiValue));
@@ -1138,11 +1180,11 @@ static void createControls(HWND hwnd, DlgState* s, HINSTANCE hi, const std::wstr
         label(range,rx,y+55,innerW,g_subFont);
         return h;
     };
-    s->hMagW=slider(ID_MAG_W,L"Lens width",L"64–4096 target pixels",my+75,64,4096,64,s->hMagWValue);
-    s->hMagH=slider(ID_MAG_H,L"Lens height",L"64–4096 target pixels",my+148,64,4096,64,s->hMagHValue);
-    s->hMagZoom=slider(ID_MAG_ZOOM,L"Magnification",L"125–800% of normal mirror scale",my+221,125,800,25,s->hMagZoomValue);
-    s->hMagBorder=slider(ID_MAG_BORDER,L"Border thickness",L"0–20 pixels · 0 hides the outline",my+294,0,20,2,s->hMagBorderValue);
-    s->hMagFeather=slider(ID_MAG_FEATHER,L"Edge blur",L"0–64 pixels · 0 keeps a crisp edge",my+367,0,64,4,s->hMagFeatherValue);
+    s->hMagW=slider(ID_MAG_W,ID_MAG_W_EDIT,L"Lens width",L"64–4096 target pixels",L"px",my+75,64,4096,64,s->hMagWValue);
+    s->hMagH=slider(ID_MAG_H,ID_MAG_H_EDIT,L"Lens height",L"64–4096 target pixels",L"px",my+148,64,4096,64,s->hMagHValue);
+    s->hMagZoom=slider(ID_MAG_ZOOM,ID_MAG_ZOOM_EDIT,L"Magnification",L"125–800% of normal mirror scale",L"%",my+221,125,800,25,s->hMagZoomValue);
+    s->hMagBorder=slider(ID_MAG_BORDER,ID_MAG_BORDER_EDIT,L"Border thickness",L"0–20 pixels · 0 hides the outline",L"px",my+294,0,20,2,s->hMagBorderValue);
+    s->hMagFeather=slider(ID_MAG_FEATHER,ID_MAG_FEATHER_EDIT,L"Edge blur",L"0–64 pixels · 0 keeps a crisp edge",L"px",my+367,0,64,4,s->hMagFeatherValue);
     for(HWND h:s->magPage) ShowWindow(h,SW_HIDE);
     createOptionTooltips(hwnd, s, hi);
 
@@ -1257,6 +1299,7 @@ static LRESULT CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         break;
     case WM_NOTIFY:
         if(s && ((NMHDR*)lp)->hwndFrom==s->hTab && ((NMHDR*)lp)->code==TCN_SELCHANGE) {
+            if(s->page==1) commitMagnifierValues(s);
             s->page=(int)SendMessageW(s->hTab,TCM_GETCURSEL,0,0);
             for(HWND h:s->mirrorPage) ShowWindow(h,s->page==0?SW_SHOWNA:SW_HIDE);
             for(HWND h:s->magPage) ShowWindow(h,s->page==1?SW_SHOWNA:SW_HIDE);
@@ -1267,6 +1310,7 @@ static LRESULT CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
     case WM_COMMAND: {
         if (!s) return 0;
         int id = LOWORD(wp), code = HIWORD(wp);
+        if (handleMagnifierEdit(s,id,code)) return 0;
         if (id==ID_MAG_COLOR && code==BN_CLICKED) { if(ColorPicker::Choose(hwnd,s->magColor)) InvalidateRect(s->hMagColor,nullptr,TRUE); return 0; }
         if ((id==ID_MAG_ENABLE && code==BN_CLICKED) || (id==ID_MAG_MODE && code==CBN_SELCHANGE)) {updateMagnifierControls(s); return 0;}
         if (code == CBN_SELCHANGE && (id == ID_SRC_COMBO || id == ID_TGT_COMBO)){
