@@ -2,81 +2,79 @@
   <img src="docs/icon.png" width="96" alt="Monitor Mirror icon">
 </p>
 
-<h1 align="center">Monitor Mirror</h1>
+<h1 align="center">Active Monitor Mirror</h1>
 
 <p align="center">
-  A simple monitor display mirroring tool — draw on the tablet,
-  and see it live on your main monitor with almost no delay.
+  Mirror a monitor or desktop region to another display, with optional automatic source switching and a cursor-following magnifier.
 </p>
 
-> **Windows 10 / 11 only** (64-bit). Not available for macOS or Linux.
+> **Windows 10 / 11 (64-bit).** Use extended displays for a dedicated mirror monitor.
 
----
+A continuation of [Monitor Mirror by finaea](https://github.com/finaea/monitor-mirror), using Direct3D 11 and DXGI Desktop Duplication.
 
-## What it's for
+## Features
 
-This was built intended for people who prefer an easy software solution to draw in hybrid with pen display tablet (e.g. a Huion / Wacom pen display) mirroring the main monitor for better ergonomic.
+- **Fixed source:** Mirror an entire monitor or a selected region, with aspect-ratio-preserving scaling, rotation and Flip X / Flip Y.
+- **Follow Mouse:** Automatically mirror the display under the cursor, excluding the designated target.
+- **Floating window:** Mirror into a movable, resizable window, including on the source monitor.
+- **Magnifier:** Enlarge a customizable area around the cursor using the original source texture.
+- **Cursor and window guard:** Keep the pointer and application windows off the dedicated mirror monitor.
+- **Visual setup:** Identify displays, select regions and adjust settings while mirroring continues.
+- **Performance options:** FPS limit, V-Sync, low latency mode and tray diagnostics.
 
-Especially on an **ultrawide**: mirror just the slice you're working in onto
-another screen (or a floating window) at true 1:1 — **no picture-in-picture supported monitor or
-capture card needed**.
+## Build and run
 
-Can be use for other purposes such as OBS recording.
+The native C++ source is in [`cpp/`](cpp). Build with a MinGW-w64 C++17 toolchain, such as [MSYS2 UCRT64](https://www.msys2.org/).
 
-(Note that this is just a mirroring tool, it does not transfer pen pressure data. You have to configure your tablet driver to map the same area as the main working monitor area, and then mirror that to your drawing tablet. It's a workaround method. Alternatively, you can set your drawing tablet as main working monitor and then mirror this to your ultrawide monitor)
+In the MSYS2 UCRT64 terminal, install the compiler and resource tools:
 
-## Demo
+```sh
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils
+```
 
-![Image Sample](preview.png)
+Add `C:\msys64\ucrt64\bin` to PATH, open a Windows command prompt in `cpp/`, and run `build.bat`. Start the resulting `mirror.exe`. The first run opens the setup window.
 
-Drawing on the pen display (right) shows live on the main monitor (left):
+## Mirroring
 
-https://github.com/user-attachments/assets/e7b94a26-75c2-48ef-9c2b-6fdceb70ded8
+Select a source and target monitor. In fixed-source mode, drag the source and target regions or enter pixel coordinates. Use rotation and Flip X / Flip Y to adjust image orientation.
 
+Select **Follow Mouse (all except target)** to automatically fit the full display under the cursor to the target. Manual crop, orientation, FPS cap and floating-window controls are unavailable in this mode. All monitors must be connected to the same GPU.
 
-## The setup window
+**Identify monitors** shows the program's monitor numbers on the physical screens. These may differ from Windows Settings. Monitor selections use hardware identifiers where available.
 
-Quick configurable UI - Pick your screens, drag (or type) the exact area to mirror, and go.
+| Option | Description |
+| --- | --- |
+| FPS | Fixed-source frame-rate limit; 0 is uncapped. |
+| V-Sync | Synchronizes presentation with the target refresh. Off by default. |
+| Low latency | Skips unchanged frames and bypasses the manual FPS cap. Off by default. |
+| Show cursor | Includes the mouse pointer in the mirrored image. |
+| Black background | Covers unused portions of the target display in fixed-source mode. |
+| Lock cursor to active screens | Keeps the pointer off the dedicated target monitor. |
+| Keep windows off mirror monitor | Relocates application windows to accessible displays. Protected or elevated windows may resist relocation. |
+| Log to file | Writes diagnostic messages to `mirror.log`. |
 
-![Monitor Mirror setup window](docs/setup.png)
+Cursor confinement and window relocation are suspended when mirroring is paused and are not used in floating-window mode.
 
-## Key features
+## Magnifier
 
-- ⚡ **Ultra-low latency** — an all-GPU pipeline (DXGI Desktop Duplication → GPU
-  crop → flip-model present). Under ~1 ms of added work; no CPU round-trip, no
-  compositor frame. (Full breakdown in the [cpp README](cpp/README.md#how-fast-is-it-and-how-does-it-work).)
-- 🖥️ **Visual setup** — pick the working monitor and the mirror monitor, drag a
-  box or type exact pixels; the mirror area is **ratio-locked**.
-- 🪟 **Floating-window mode** — mirror into a movable, resizable window that can
-  share the **same** screen — no second monitor needed, and easy to capture in OBS.
-- 🔄 **Rotation & flip** — 90° / 180° / 270° plus horizontal/vertical flip, for
-  tablets mounted sideways or upside-down.
-- 🎚️ **Tuning** — FPS cap, V-Sync, cursor on/off, and a black-out-background toggle.
-- 🧷 **Robust config** — monitors are remembered by a **stable hardware id** (not
-  just `\\.\DISPLAYx`), so re-plugging that renumbers displays won't break it.
-  Import/export your settings as a `.cfg`.
-- 🛟 **Self-healing** — on a display change, unplug, or bad config it re-opens the
-  setup window and tells you exactly what's wrong. Optional `mirror.log` for
-  diagnostics.
-- 📌 **Lives in the tray** — left-click to toggle, right-click to edit or quit;
-  uses zero resources when disabled.
+Enable the lens on the Magnifier tab to enlarge the captured area around the mouse pointer on the mirror only. It samples the original capture texture rather than the downscaled image.
 
----
+- **Activation:** Toggle shortcut, hold shortcut or always on. The default shortcut is Alt+Shift+M and can be changed.
+- **Shape and size:** Ellipse, rectangle or rounded rectangle, with independent width and height in target pixels.
+- **Magnification:** 125–800% of the normal mirror scale.
+- **Image edge behavior:** Clip the lens at the image boundary or shift it inside the image.
+- **Border:** Adjust thickness (0 hides it) and choose any RGB color using the color wheel or numerical RGB fields.
+- **Edge blur:** Feather the lens into the normal image over 0–64 target pixels.
+- **Sharp pixels:** Nearest-neighbor lens sampling instead of linear interpolation. Off by default.
 
-## Just want to use it?
+## Tray and configuration
 
-👉 **[Download the latest `mirror.exe`](https://github.com/finaea/monitor-mirror/releases/latest/download/mirror.exe)** (or browse [all releases](https://github.com/finaea/monitor-mirror/releases)).
+Left-click the tray icon to pause or resume mirroring. Right-click for setup, performance diagnostics and quit.
 
-That's the whole app — a single small file, no installer. Double-click it; the
-first time, a setup window walks you through picking your screens and the area to
-mirror. See the [`cpp`](cpp) README for full usage.
+The stream continues while setup is open. **Save & Apply** applies changes; **Cancel** discards them. Some changes require rebuilding capture resources.
 
-## What's in this project
+Settings are stored in `mirror.cfg` beside the executable. Use Import and Export in setup to load or back up configurations. Existing settings take precedence over defaults. If a display is disconnected or capture fails, the application attempts to recover automatically.
 
-| Folder | What it is |
-|---|---|
-| [`cpp/`](cpp) | **The app you should use.** Tiny, fastest, set up with a visual window. |
-| [`python/`](python) | An **older version kept for reference/archival**. Same idea, but settings are edited in code instead of a window. |
+## License
 
-A detailed side-by-side of the two versions lives in
-[`python/build_compare.md`](python/build_compare.md).
+[MIT](LICENSE). Based on [finaea/monitor-mirror](https://github.com/finaea/monitor-mirror).
