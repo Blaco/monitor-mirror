@@ -19,6 +19,10 @@ Active Monitor Mirror is a continuation of [Monitor Mirror by finaea](https://gi
 
 It mirrors a desktop region or an entire monitor onto another display or a floating window using Direct3D 11 and DXGI Desktop Duplication. It can also automatically switch the mirrored source based on the mouse position, which makes it useful for a dedicated preview or mirror monitor that follows the active screen.
 
+## The setup window
+
+![Setup window](setup-window-preview.png)
+
 ## Key features
 
 - ⚡ **Native GPU mirroring** — Direct3D 11 and DXGI Desktop Duplication with GPU scaling and no video encoding.
